@@ -15,6 +15,7 @@ class UI:
         self.offset_history = deque(maxlen=200)
         self._display_speed = 0.0
         self._display_steering = 0.0
+        self.track_name = ""
 
     def _init_fonts(self):
         mono = cfg.FONT_MONO
@@ -46,9 +47,13 @@ class UI:
         rect = pygame.Rect(cfg.MAP_X, cfg.MAP_Y, cfg.MAP_W, cfg.MAP_H)
         pygame.draw.rect(screen, cfg.BG_PANEL, rect)
 
-        # Title
-        title_surf = self.fonts["title"].render("MAP VIEW", True, cfg.TEXT_ACCENT)
+        # Title with track name
+        title_text = f"MAP VIEW  -  {self.track_name}" if self.track_name else "MAP VIEW"
+        title_surf = self.fonts["title"].render(title_text, True, cfg.TEXT_ACCENT)
         screen.blit(title_surf, (rect.x + 12, rect.y + 8))
+        # M = menu hint
+        hint = self.fonts["fps"].render("M=menu", True, cfg.TEXT_SECONDARY)
+        screen.blit(hint, (rect.x + rect.w - hint.get_width() - 10, rect.y + 10))
         pygame.draw.line(screen, cfg.SEPARATOR,
                          (rect.x + 8, rect.y + 28),
                          (rect.x + rect.w - 8, rect.y + 28), 1)
@@ -197,9 +202,16 @@ class UI:
         right_x = rect.x + 12 + card_w + gap
 
         # Row 1: Speed | Steering
+        adaptive = metrics.get("adaptive", False)
+        max_spd = metrics.get("max_speed", self._display_speed)
+        spd_ratio = self._display_speed / max(max_spd, 1)
+        spd_color = (cfg.GAUGE_FILL_NORMAL if spd_ratio > 0.8
+                     else cfg.GAUGE_FILL_WARN if spd_ratio > 0.5
+                     else cfg.GAUGE_FILL_DANGER)
+        spd_label = "SPEED (AUTO)" if adaptive else "SPEED"
         self._draw_metric_card(screen, left_x, y_start, card_w, card_h,
-                               "SPEED", f"{self._display_speed:.0f}", "px/s",
-                               self._display_speed / 200, cfg.GAUGE_FILL_NORMAL)
+                               spd_label, f"{self._display_speed:.0f}", "px/s",
+                               self._display_speed / max(max_spd, 1), spd_color)
         self._draw_metric_card(screen, right_x, y_start, card_w, card_h,
                                "STEERING", f"{self._display_steering:.1f}", "deg",
                                abs(self._display_steering) / 30, cfg.TEXT_ACCENT,

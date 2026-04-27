@@ -2,13 +2,16 @@
 
 A real-time lane detection and autonomous steering system built entirely with classical computer vision techniques and PID control theory. The simulator renders a first-person camera view of a closed-loop track, detects lane markings using a traditional CV pipeline (Canny + Hough Transform), and steers a kinematic bicycle-model vehicle to stay centered in the lane -- all without deep learning.
 
-![FPV Camera View with Lane Detection](docs/screenshot.png)
+![Simulator Screenshot](docs/screenshot.png)
+
+![Track Selection Screen](docs/track_selector.png)
 
 ---
 
 ## Table of Contents
 
 - [Features](#features)
+- [Available Tracks](#available-tracks)
 - [System Architecture](#system-architecture)
 - [Technical Details](#technical-details)
   - [Track Generation](#track-generation)
@@ -35,10 +38,50 @@ A real-time lane detection and autonomous steering system built entirely with cl
   - **Map View** (top-left) -- Top-down view of the full track with the vehicle marker and trailing path.
   - **FPV Camera View** (right) -- Large panel showing the rendered camera feed with lane detection overlays, confidence indicator, and HUD.
   - **Dashboard** (bottom-left) -- Live gauges for speed, steering angle, lane offset, FPS, PID component breakdown (P/I/D bar chart), offset history sparkline, and a steering arc gauge.
-- **Catmull-Rom Spline Track** -- Smooth closed-loop track generated from editable waypoints using Catmull-Rom interpolation.
+- **5 Built-in Tracks** -- Five circuits of increasing difficulty, from a gentle oval to a challenging highland rally. Each track has tuned road width and recommended speed. A visual track selection screen with miniature previews lets you pick before driving.
+- **Track Selection** -- Choose tracks via an interactive start screen (click or press 1-5) or from the command line with `--map`.
+- **Catmull-Rom Spline Track** -- Smooth closed-loop tracks generated from editable waypoints using Catmull-Rom interpolation.
 - **Temporal Smoothing** -- Detected lane lines and center offset are smoothed across frames to reduce jitter.
 - **Real-Time Metrics** -- Speed, steering angle, lane offset, detection confidence, FPS, and individual PID component contributions are displayed and updated every frame.
-- **Interactive Controls** -- Pause/resume, reset simulation, and adjust vehicle speed at runtime.
+- **Interactive Controls** -- Pause/resume, reset simulation, adjust speed, and return to track selector at any time.
+
+---
+
+## Available Tracks
+
+The simulator includes five tracks of increasing difficulty. Each track has its own road width and recommended speed, tuned so the classical CV pipeline can keep the vehicle on the road.
+
+| # | Track | Difficulty | Road Width | Speed | Waypoints | Description |
+|---|-------|-----------|-----------|-------|-----------|-------------|
+| 1 | `oval` | + - - - - | 110 px | 100 px/s | 12 | Gentle curves, ideal for understanding the system |
+| 2 | `stadium` | + + - - - | 105 px | 95 px/s | 14 | Longer circuit with a kink on the back straight |
+| 3 | `snake` | + + + - - | 100 px | 85 px/s | 12 | Sweeping S-curves with continuous direction changes |
+| 4 | `grand_prix` | + + + + - | 100 px | 80 px/s | 13 | Esses, wide turns, and a long start/finish straight |
+| 5 | `mountain` | + + + + + | 95 px | 75 px/s | 13 | Narrow road with a climb, summit bend, and descent |
+| 6 | `redbull_ring` | + + + + + | 120 px | 120 px/s | 21 | F1 Red Bull Ring with sharp right-handers and adaptive speed control |
+
+<details>
+<summary>Track screenshots (click to expand)</summary>
+
+**Simple Oval**
+![Simple Oval](docs/track_oval.png)
+
+**Stadium Circuit**
+![Stadium Circuit](docs/track_stadium.png)
+
+**Winding Road**
+![Winding Road](docs/track_snake.png)
+
+**Grand Prix Circuit**
+![Grand Prix Circuit](docs/track_grand_prix.png)
+
+**Highland Rally**
+![Highland Rally](docs/track_mountain.png)
+
+**Red Bull Ring** (with adaptive speed control)
+![Red Bull Ring](docs/track_redbull_ring.png)
+
+</details>
 
 ---
 
@@ -73,7 +116,7 @@ The simulator follows a closed-loop pipeline that executes once per frame:
 
 ### Track Generation
 
-The track is defined by a set of 12 waypoints (configurable in `config.py`) that form a closed loop. A **Catmull-Rom spline** interpolates between these waypoints to produce a smooth centerline with 60 samples per segment (720 total points).
+Each track is defined by a set of waypoints (12-14 per track, configurable in `config.py`) that form a closed loop. A **Catmull-Rom spline** interpolates between these waypoints to produce a smooth centerline with 60 samples per segment. The `Track` constructor accepts `waypoints` and `road_width` as parameters, making it straightforward to add custom tracks.
 
 From the centerline, the system computes:
 
@@ -181,6 +224,26 @@ steering = Kp * e(t) + Ki * integral(e) + Kd * de/dt
 
 The output is clamped to the vehicle's maximum steering angle (+/-40 degrees). Individual P, I, and D contributions are exposed for real-time visualization on the dashboard.
 
+### Adaptive Speed Controller
+
+Tracks that set `adaptive_speed: True` (currently the Spa-Francorchamps circuit) use a curvature-based speed controller that automatically slows the vehicle before sharp turns and accelerates on straights.
+
+**How it works:**
+
+1. **Curvature pre-computation** -- At track creation, the discrete curvature is computed at every centerline point using the cross-product formula on finite differences, then smoothed with a 15-point rolling average.
+2. **Look-ahead** -- Each frame, the controller queries the maximum curvature within 250 px ahead of the vehicle's current position.
+3. **Speed target** -- The target speed is `gain / max_curvature`, clamped between `SPEED_MIN` (40 px/s) and the track's configured maximum speed.
+4. **Asymmetric smoothing** -- The vehicle speed blends toward the target each frame. Braking is 3x faster than acceleration, modeling the real-world asymmetry where slowing down is more urgent than speeding up.
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `SPEED_MIN` | 40 px/s | Floor speed in the tightest curves |
+| `SPEED_CURVATURE_GAIN` | 0.45 | Lower values produce more aggressive braking |
+| `SPEED_LOOK_AHEAD_DIST` | 250 px | How far ahead to scan for upcoming curvature |
+| `SPEED_SMOOTHING` | 0.06 | Per-frame blend factor (braking uses 3x this value) |
+
+When adaptive speed is active, the dashboard shows "SPEED (AUTO)" and the speed gauge color changes from green (near max) to yellow (moderate reduction) to red (heavy braking).
+
 ---
 
 ## Installation
@@ -224,14 +287,18 @@ The project depends on three packages:
 4. Run the simulator:
 
 ```bash
-python main.py
+python main.py                # Opens the track selection screen
+python main.py --map oval     # Jump straight into a specific track
+python main.py --map mountain # Available: oval, stadium, snake, grand_prix, mountain, redbull_ring
 ```
 
 ---
 
 ## Usage and Controls
 
-When launched, the simulator opens a 1400x800 window divided into three panels. The vehicle begins at the first track waypoint, heading aligned with the road, and immediately starts driving and steering autonomously.
+When launched without `--map`, the simulator displays a **track selection screen** with miniature previews of all five circuits. Click a card or press 1-5 to start. When launched with `--map <name>`, the simulation starts immediately on the chosen track.
+
+During simulation, the vehicle begins at the first track waypoint and immediately starts driving and steering autonomously.
 
 ### Keyboard Controls
 
@@ -239,6 +306,7 @@ When launched, the simulator opens a 1400x800 window divided into three panels. 
 |--------------|---------------------------------------------|
 | `Space`      | Pause / resume the simulation               |
 | `R`          | Reset the vehicle to the starting position  |
+| `M`          | Return to the track selection screen        |
 | `Up Arrow`   | Increase speed by 20 px/s (max 300 px/s)   |
 | `Down Arrow` | Decrease speed by 20 px/s (min 40 px/s)    |
 | `Esc`        | Quit the simulator                          |
@@ -269,15 +337,16 @@ All tunable parameters are centralized in `config.py`. Below are the key paramet
 | `WINDOW_HEIGHT` | 800     | Total window height in pixels   |
 | `FPS_TARGET`    | 60      | Target frame rate               |
 
-### Track
+### Tracks
+
+Tracks are defined in the `TRACKS` dictionary in `config.py`. Each entry contains `waypoints`, `road_width`, `speed`, `difficulty`, and `description`. To add a custom track, add a new entry to the dictionary.
 
 | Parameter                | Default | Description                              |
 |--------------------------|---------|------------------------------------------|
-| `ROAD_WIDTH`             | 100.0   | Road width in world pixels               |
 | `LANE_DASH_LENGTH`       | 20.0    | Center line dash length                  |
 | `LANE_DASH_GAP`          | 15.0    | Center line gap length                   |
 | `TRACK_SAMPLES_PER_SEGMENT` | 60   | Spline interpolation density             |
-| `TRACK_WAYPOINTS`        | 12 pts  | List of (x, y) tuples defining the track |
+| `DEFAULT_TRACK`          | `"oval"`| Fallback track when none specified       |
 
 ### Vehicle
 
@@ -329,9 +398,9 @@ All tunable parameters are centralized in `config.py`. Below are the key paramet
 
 ```
 lane-detection/
-├── main.py              # Entry point: simulation loop, event handling
-├── config.py            # All constants and tunable parameters
-├── track.py             # Track definition with Catmull-Rom spline interpolation
+├── main.py              # Entry point: CLI args, track selector, simulation loop
+├── config.py            # All constants, 5 track definitions, tunable parameters
+├── track.py             # Track generation with Catmull-Rom spline interpolation
 ├── vehicle.py           # Bicycle kinematic vehicle model
 ├── camera.py            # FPV camera with pinhole perspective projection
 ├── vision.py            # Classical CV lane detection pipeline
@@ -340,7 +409,14 @@ lane-detection/
 ├── requirements.txt     # Python dependencies
 ├── description.md       # Original project specification
 ├── docs/
-│   └── screenshot.png   # Screenshot of the simulator in action
+│   ├── screenshot.png        # Main simulator screenshot
+│   ├── track_selector.png    # Track selection screen
+│   ├── track_oval.png        # Simple Oval
+│   ├── track_stadium.png     # Stadium Circuit
+│   ├── track_snake.png       # Winding Road
+│   ├── track_grand_prix.png  # Grand Prix Circuit
+│   ├── track_mountain.png    # Highland Rally
+│   └── track_redbull_ring.png # Red Bull Ring (adaptive speed)
 └── README.md            # This file
 ```
 

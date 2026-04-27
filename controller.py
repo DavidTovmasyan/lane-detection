@@ -53,3 +53,48 @@ class PIDController:
         self.last_p = 0.0
         self.last_i = 0.0
         self.last_d = 0.0
+
+
+class SpeedController:
+    """Curvature-based adaptive speed controller.
+
+    Looks ahead on the track, finds the sharpest curve, and computes
+    a target speed: fast on straights, slow before sharp turns.
+    """
+
+    def __init__(self, max_speed, min_speed=cfg.SPEED_MIN,
+                 curvature_gain=cfg.SPEED_CURVATURE_GAIN,
+                 look_ahead=cfg.SPEED_LOOK_AHEAD_DIST,
+                 smoothing=cfg.SPEED_SMOOTHING):
+        self.max_speed = max_speed
+        self.min_speed = min_speed
+        self.curvature_gain = curvature_gain
+        self.look_ahead = look_ahead
+        self.smoothing = smoothing
+        self.current_speed = max_speed
+        self.target_speed = max_speed
+
+    def update(self, track, car_x, car_y, dt):
+        """Compute the target speed and smoothly adjust current speed."""
+        max_curv = track.get_max_curvature_ahead(car_x, car_y, self.look_ahead)
+
+        # target = gain / curvature, clamped to [min, max]
+        if max_curv > 1e-6:
+            raw = self.curvature_gain / max_curv
+            self.target_speed = float(np.clip(raw, self.min_speed, self.max_speed))
+        else:
+            self.target_speed = self.max_speed
+
+        # Smooth: blend toward target (asymmetric -- brake faster than accelerate)
+        if self.target_speed < self.current_speed:
+            blend = min(1.0, self.smoothing * 3)  # brake 3x faster
+        else:
+            blend = self.smoothing
+        self.current_speed += (self.target_speed - self.current_speed) * blend
+        return self.current_speed
+
+    def reset(self, max_speed=None):
+        if max_speed is not None:
+            self.max_speed = max_speed
+        self.current_speed = self.max_speed
+        self.target_speed = self.max_speed

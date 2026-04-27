@@ -5,17 +5,25 @@ import config as cfg
 
 
 class Track:
-    def __init__(self):
-        wp = np.array(cfg.TRACK_WAYPOINTS, dtype=np.float64)
+    def __init__(self, waypoints=None, road_width=None):
+        if waypoints is None:
+            track_def = cfg.TRACKS[cfg.DEFAULT_TRACK]
+            waypoints = track_def["waypoints"]
+            road_width = track_def["road_width"]
+        if road_width is None:
+            road_width = cfg.DEFAULT_ROAD_WIDTH
+        self.road_width = road_width
+        wp = np.array(waypoints, dtype=np.float64)
         self.waypoints = wp
         self.centerline = self._interpolate(wp)
         self.tangents = self._compute_tangents(self.centerline)
         self.normals = self._compute_normals(self.tangents)
         # Normal points in screen-down direction (right of travel in screen coords)
         # So left boundary is centerline MINUS normal, right is PLUS
-        self.left_boundary = self.centerline - self.normals * (cfg.ROAD_WIDTH / 2)
-        self.right_boundary = self.centerline + self.normals * (cfg.ROAD_WIDTH / 2)
+        self.left_boundary = self.centerline - self.normals * (self.road_width / 2)
+        self.right_boundary = self.centerline + self.normals * (self.road_width / 2)
         self.center_dashes = self._compute_dashes(self.centerline)
+        self.curvature = self._compute_curvature(self.centerline)
         self._bounds = self._compute_bounds()
 
     # ── Catmull-Rom spline ──────────────────────────────────────────
@@ -56,6 +64,61 @@ class Track:
         # Rotate tangent 90 degrees CCW: (tx, ty) -> (-ty, tx)
         normals = np.column_stack([-tangents[:, 1], tangents[:, 0]])
         return normals
+
+    def _compute_curvature(self, cl):
+        """Compute curvature at each centerline point.
+
+        Uses the cross-product formula on finite differences:
+            kappa = |dx * d2y - dy * d2x| / (dx^2 + dy^2)^1.5
+        Result is smoothed with a rolling window for stability.
+        """
+        n = len(cl)
+        # First derivatives (central differences, wrapping)
+        dx = np.zeros(n)
+        dy = np.zeros(n)
+        dx[1:-1] = cl[2:, 0] - cl[:-2, 0]
+        dy[1:-1] = cl[2:, 1] - cl[:-2, 1]
+        dx[0] = cl[1, 0] - cl[-1, 0]
+        dy[0] = cl[1, 1] - cl[-1, 1]
+        dx[-1] = cl[0, 0] - cl[-2, 0]
+        dy[-1] = cl[0, 1] - cl[-2, 1]
+        # Second derivatives
+        d2x = np.zeros(n)
+        d2y = np.zeros(n)
+        d2x[1:-1] = cl[2:, 0] - 2 * cl[1:-1, 0] + cl[:-2, 0]
+        d2y[1:-1] = cl[2:, 1] - 2 * cl[1:-1, 1] + cl[:-2, 1]
+        d2x[0] = cl[1, 0] - 2 * cl[0, 0] + cl[-1, 0]
+        d2y[0] = cl[1, 1] - 2 * cl[0, 1] + cl[-1, 1]
+        d2x[-1] = cl[0, 0] - 2 * cl[-1, 0] + cl[-2, 0]
+        d2y[-1] = cl[0, 1] - 2 * cl[-1, 1] + cl[-2, 1]
+
+        denom = (dx ** 2 + dy ** 2) ** 1.5
+        denom = np.maximum(denom, 1e-8)
+        kappa = np.abs(dx * d2y - dy * d2x) / denom
+
+        # Smooth with a rolling average (window ~15 points)
+        kernel_size = 15
+        kernel = np.ones(kernel_size) / kernel_size
+        kappa_smooth = np.convolve(kappa, kernel, mode="same")
+        return kappa_smooth
+
+    def get_max_curvature_ahead(self, car_x, car_y, look_ahead):
+        """Return the max curvature in the road ahead of the car."""
+        idx, _ = self.get_nearest_index(car_x, car_y)
+        n = len(self.centerline)
+        count = 0
+        cum = 0.0
+        for i in range(1, n):
+            j = (idx + i) % n
+            j_prev = (idx + i - 1) % n
+            cum += np.linalg.norm(self.centerline[j] - self.centerline[j_prev])
+            count += 1
+            if cum >= look_ahead:
+                break
+        indices = [(idx + i) % n for i in range(count + 1)]
+        if not indices:
+            return 0.0
+        return float(np.max(self.curvature[indices]))
 
     def _compute_dashes(self, cl):
         """Return list of (start_idx, end_idx) for dash-on segments."""

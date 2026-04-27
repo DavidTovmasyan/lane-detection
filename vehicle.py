@@ -27,6 +27,8 @@ class Vehicle:
         self.y += self.speed * math.sin(self.heading) * dt
         if abs(self.steering) > 1e-6:
             self.heading += (self.speed / self.wheelbase) * math.tan(self.steering) * dt
+        # Normalize heading to [-pi, pi]
+        self.heading = math.atan2(math.sin(self.heading), math.cos(self.heading))
 
     def get_state(self):
         return {
