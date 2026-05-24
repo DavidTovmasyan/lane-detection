@@ -1,0 +1,16 @@
+\begin{tabular}{l c c c c c c}
+\toprule
+ & \multicolumn{2}{c}{\textsc{hough}} & \multicolumn{2}{c}{\textsc{polyfit}} & \textsc{centroid} & Stanley \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Track & RMS & IoU & RMS & IoU & RMS & RMS \\
+\midrule
+Simple Oval & 27.4 & 0.17 & 17.6 & 0.25 & \textsc{dnf} & 0.4 \\
+Stadium Circuit & 26.2 & 0.24 & 17.0 & 0.31 & \textsc{dnf} & 0.6 \\
+Winding Road & 24.9 & 0.23 & 15.7 & 0.35 & \textsc{dnf} & 0.6 \\
+Grand Prix Circuit & 24.8 & 0.26 & 17.7 & 0.36 & \textsc{dnf} & 0.8 \\
+Highland Rally & 23.8 & 0.31 & 15.1 & 0.39 & \textsc{dnf} & 0.7 \\
+\midrule
+\multicolumn{1}{l}{\textit{mean} (px)} &
+ 25.4 & 0.24 & 16.6 & 0.33 & -- & 0.6 \\
+\bottomrule
+\end{tabular}

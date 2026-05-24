@@ -222,6 +222,10 @@ KI = 0.008
 KD = 0.5
 PID_INTEGRAL_LIMIT = 50.0
 
+# ── Stanley Controller ──────────────────────────────────────────────
+STANLEY_K = 0.6        # cross-track gain
+STANLEY_KS = 20.0      # soft-speed constant (avoids 1/v blow-up at low v)
+
 # ── Adaptive Speed Controller ───────────────────────────────────────
 SPEED_MIN = 35.0               # minimum speed (px/s)
 SPEED_CURVATURE_GAIN = 0.35    # lower = slower in curves

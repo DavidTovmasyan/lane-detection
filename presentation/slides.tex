@@ -1,0 +1,486 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+% ── Theme ────────────────────────────────────────────────────────────
+\usetheme{metropolis}
+\usecolortheme{owl}
+\setbeamercolor{normal text}{fg=white,bg=black!92!blue}
+\setbeamercolor{alerted text}{fg=yellow!85!orange}
+\setbeamercolor{frametitle}{bg=black!85!blue,fg=yellow!85!orange}
+\setbeamercolor{progress bar}{fg=yellow!85!orange}
+\setbeamercolor{title separator}{fg=yellow!85!orange}
+\setbeamercolor{progress bar in head/foot}{fg=yellow!85!orange}
+\setbeamercolor{progress bar in section page}{fg=yellow!85!orange}
+\setbeamerfont{frametitle}{series=\bfseries}
+\setbeamertemplate{itemize items}[circle]
+\setbeamercovered{transparent=30}
+
+% Stop a frame from being numbered (used for the title slide)
+\makeatletter
+\setlength{\metropolis@titleseparator@linewidth}{2pt}
+\setlength{\metropolis@progressonsectionpage@linewidth}{1.5pt}
+\setlength{\metropolis@progressinheadfoot@linewidth}{1.5pt}
+\makeatother
+
+% Suppress the auto-generated metropolis section page so we don't get
+% blank dividers between every section in a 16:9 deck.
+\AtBeginSection[]{}
+
+% ── Title ────────────────────────────────────────────────────────────
+\title{Real-Time Lane Detection \\ and Autonomous Steering}
+\subtitle{A comparison of classical pipelines \\
+  and a polynomial-fit improvement}
+\author{David Tovmasyan}
+\institute{Course project, May 2026}
+\date{}
+
+% ── Helpers ──────────────────────────────────────────────────────────
+\newcommand{\highlight}[1]{\textcolor{yellow!85!orange}{\textbf{#1}}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\begin{document}
+
+% ── Title slide ──────────────────────────────────────────────────────
+\maketitle
+
+% ── Outline ──────────────────────────────────────────────────────────
+\begin{frame}{Where we are going}
+  \small\tableofcontents
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Motivation}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Why lane keeping (still) matters}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}
+      \begin{itemize}
+        \item Most-deployed AD function: every modern car ships
+              lane-keep assist or adaptive cruise.
+        \item Two coupled problems
+              \begin{itemize}
+                \item \highlight{Perception:} where is the lane?
+                \item \highlight{Control:} how do we stay in it?
+              \end{itemize}
+        \item Learned segmenters dominate benchmarks, but a classical
+              pipeline is:
+              \begin{itemize}
+                \item interpretable (debuggable),
+                \item CPU-friendly ($>500$\,FPS),
+                \item zero training data required.
+              \end{itemize}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \includegraphics[width=\linewidth]{figures/annotations.pdf}\\
+      {\footnotesize\color{gray}Same frame, three detectors.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{The concrete question}
+  \begin{center}\Large
+    How much performance is left on the table\\
+    by the textbook Canny+Hough detector,\\
+    and can a \highlight{polynomial-fit upgrade}\\
+    close the gap on curved tracks\\
+    while staying \highlight{real-time}?
+  \end{center}
+  \vspace{1em}
+  \begin{itemize}
+    \item Implement two classical baselines + one upgrade.
+    \item Plug each into a PID controller.
+    \item Add a Stanley controller driven from \emph{ground truth} as a
+          perception-free oracle (upper bound on what the controller
+          can do given perfect perception).
+    \item Evaluate on five tracks + a noise sweep.
+  \end{itemize}
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{The simulator}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{What we built}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}\footnotesize
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item 2D forward-perspective driving simulator
+              (Python + OpenCV + pygame).
+        \item 5 tracks (difficulty 1--5), closed-loop Catmull--Rom
+              spline.
+        \item Camera: pinhole, $70^\circ$ FoV, $18^\circ$ pitch,
+              $640\!\times\!480$ FPV.
+        \item Vehicle: bicycle kinematics,
+              $\dot\theta=(v/L)\tan\delta$.
+        \item Three live panels: map, FPV overlay, dashboard.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \includegraphics[width=\linewidth]{../docs/track_selector.png}\\[2pt]
+      \includegraphics[width=\linewidth]{../docs/track_grand_prix.png}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Ground truth = analytical}
+  Because we own the simulator, we can compute the things a benchmark
+  is normally missing:
+  \begin{itemize}\setlength\itemsep{1pt}
+    \item \highlight{True lateral offset} from the centreline spline.
+    \item \highlight{True heading error} vs.\ the track tangent.
+    \item \highlight{True curvature} ahead (adaptive speed control,
+          turn-sharpness grouping).
+    \item \highlight{Ground-truth lane polygon} in the camera frame
+          (re-project road from spline) $\Rightarrow$
+          \highlight{lane-IoU} against any predicted mask.
+  \end{itemize}
+  $\Rightarrow$ Every metric is anchored to a number the detector
+  \emph{cannot see}.
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Three lane detectors}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Baseline 1: centroid}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}
+      \textbf{Pipeline}
+      \begin{enumerate}
+        \item Threshold road colour in HSV
+              $(S<40,\,40<V<110)$.
+        \item Trapezoidal ROI mask.
+        \item Centroid of the resulting blob via image moments.
+        \item EMA smoothing across frames.
+      \end{enumerate}
+
+      \vspace{0.6em}
+      \textbf{Why include it?}
+      \begin{itemize}
+        \item A genuine \emph{lower bound}: the simplest detector we
+              could write down.
+        \item Demonstrates how far the lane-line geometry adds value.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \begin{block}{Spoiler}
+        \highlight{Does not complete a lap on any track.}\\
+        The blob centroid is biased away from the lane centre whenever
+        the road is asymmetric in the field of view.
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Baseline 2: Hough lines (the textbook pipeline)}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}
+      \begin{enumerate}
+        \item Grayscale + $5{\times}5$ Gaussian blur.
+        \item Canny edges, $T_\text{low}=50$, $T_\text{high}=150$.
+        \item Trapezoidal ROI mask.
+        \item Probabilistic Hough
+              ($\rho=1$, $\theta=\pi/180$, thresh $25$,
+              minlen $30$, gap $40$).
+        \item Classify segments into left/right by slope sign + image
+              side, length-weighted average per side.
+        \item Midpoint of the two lines at the bottom = lane centre.
+              $\alpha=0.4$ EMA smoothing.
+      \end{enumerate}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \begin{itemize}
+        \item Works well on straights.
+        \item \highlight{Wrong model on every curve:}
+              a straight line fit through a bend underestimates
+              the curvature.
+        \item Fall-back: remember last good line on dropouts.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Proposed: bird's-eye + sliding-window polyfit}
+  \begin{center}
+    \includegraphics[width=0.96\linewidth]{figures/polyfit_pipeline.pdf}
+  \end{center}
+  \footnotesize
+  \begin{enumerate}\setlength\itemsep{1pt}
+    \item \highlight{Lane-pixel mask}: Sobel-x + HSV masks for white
+          boundaries and yellow dashes.
+    \item \highlight{Inverse perspective}: homography to $320\!\times\!320$
+          BEV; curves become low-order polynomials.
+    \item \highlight{Sliding windows}: column histogram seeds two bases;
+          nine $50$-px windows climb upward.
+    \item \highlight{Quadratic fit + reprojection}: $x=ay^2+by+c$ per
+          lane, EMA on coefficients, reproject polygon to FPV.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{The one idea that matters: look-ahead offset}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item The polynomial fit gives us the lane shape, not just one
+              point on it.
+        \item Evaluate the lane centre at \highlight{45\,\% of the way
+              up the BEV} -- a 1-frame predictor essentially free on
+              top of the polyfit.
+        \item Feed that to the PID instead of the bottom-of-image
+              offset.
+        \item With it disabled, polyfit's RMS gain shrinks from
+              $\sim 40\,\%$ to $\sim 10\,\%$.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \includegraphics[width=\linewidth]{figures/annotations.pdf}\\
+      {\footnotesize\color{gray}The blue dot in the right panel is the
+        reprojected look-ahead point.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Two controllers}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{PID -- the baseline controller}
+  \[
+    \delta_t = K_p\,e_t
+              + K_i\!\sum_{\tau\le t}\!e_\tau\,\Delta t
+              + K_d\,\dot e_t
+  \]
+  \begin{itemize}
+    \item Input: normalised lateral offset $e\in[-1,+1]$ from the
+          detector.
+    \item Gains tuned by hand on the oval:
+          $K_p=1.2,\;K_i=0.008,\;K_d=0.5$.
+    \item Integral anti-windup at $\pm 50$.
+    \item Reactive only -- has no model of the path.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Stanley -- the perception-free oracle}
+  \[
+    \delta = \psi + \arctan\!\Bigl(\tfrac{k\,e_\perp}{k_s + v}\Bigr)
+  \]
+  \begin{itemize}
+    \item Heading error $\psi$ + cross-track error $e_\perp$ at the
+          front axle, both computed from the \emph{true} spline.
+    \item Gains $k=0.6$, $k_s=20$.
+    \item \highlight{It does not look at the camera.}
+    \item Result on every track: $<1$\,px RMS lateral error.
+    \item Interpretation: the gap between PID-on-detection and
+          Stanley-on-truth is \emph{purely} the perception error.
+  \end{itemize}
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Experiments}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Headline result: RMS lateral error per track}
+  \vspace{-0.5em}
+  \begin{center}
+    \includegraphics[width=0.78\linewidth]{figures/rms_by_track.pdf}
+  \end{center}
+  \vspace{-0.6em}
+  \footnotesize Centroid \highlight{DNF} on every track. Hough:
+  $25.4$\,px mean RMS. Polyfit: $\mathbf{16.6}$\,px ($\highlight{-34\,\%}$).
+  Stanley+truth: $<1$\,px.
+\end{frame}
+
+\begin{frame}{The full table}
+  \vspace{0.5em}
+  \begin{center}\small
+    \input{figures/summary_table.tex}
+  \end{center}
+  \vspace{0.5em}
+  \begin{itemize}
+    \item Polyfit beats Hough on \emph{every} track on both RMS and IoU.
+    \item Lane-IoU rises from $0.24$ to $0.33$ on average
+          ($\mathbf{+38\,\%}$) -- the gain is geometric, not just from
+          the look-ahead.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{What the controller actually sees}
+  \vspace{-0.4em}
+  \begin{center}
+    \includegraphics[width=0.78\linewidth]{figures/snake_traces.pdf}
+  \end{center}
+  \vspace{-0.4em}
+  \footnotesize \highlight{Top:} true error -- polyfit bounded, Hough
+  swings $\pm 30$\,px. \highlight{Bottom:} detector offset (the PID
+  input). Centroid (grey) leaves the road early.
+\end{frame}
+
+\begin{frame}{Robustness to camera noise}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}
+      \includegraphics[width=\linewidth]{figures/noise.pdf}
+    \end{column}
+    \begin{column}{0.43\textwidth}\footnotesize
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item Same oval, PID, $+$Gaussian noise
+              $\sigma\in[0,0.20]$ per frame.
+        \item Centroid never completes.
+        \item Hough survives $\sigma\le 0.10$, fails at $0.20$
+              (Canny drowned out).
+        \item \highlight{Polyfit completes at every $\sigma$} -- its
+              mask uses a \emph{normalised} Sobel-x + colour.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Compute cost}
+  \begin{center}
+    \begin{tabular}{lrr}
+      \toprule
+      Detector & ms / frame & equiv.\ FPS \\
+      \midrule
+      centroid & 1.7 & $\sim$600 \\
+      hough    & 0.7 & $\sim$1450 \\
+      polyfit  & 1.9 & $\sim$520 \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+  \vspace{1em}
+  \begin{itemize}
+    \item All three are comfortably real-time on a single CPU thread.
+    \item Polyfit overhead is dominated by the perspective warp and
+          \code{np.polyfit}, not by the sliding-window scan.
+    \item Plenty of budget left for downstream tasks (other vehicles,
+          obstacles, signs).
+  \end{itemize}
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Live demo}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Live demo}
+  \begin{center}\large
+    \texttt{python main.py {-}{-}detector polyfit {-}{-}controller pid}
+  \end{center}
+  \vspace{1em}
+  \begin{itemize}
+    \item Press \highlight{D} to cycle detectors live.
+    \item Press \highlight{C} to toggle PID $\leftrightarrow$ Stanley.
+    \item Press \highlight{M} to jump back to the track selector.
+    \item Watch the dashboard: lane offset, FPS, PID components.
+  \end{itemize}
+  \vspace{1em}
+  Suggested demo route: \emph{Stadium} (Hough wobbles) $\to$
+  \emph{Winding Road} (Hough struggles) $\to$ switch to polyfit
+  $\to$ switch to Stanley.
+\end{frame}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Discussion and conclusion}
+% ════════════════════════════════════════════════════════════════════
+
+\begin{frame}{What worked, what failed}
+  \footnotesize
+  \begin{block}{Worked}
+    \begin{itemize}\setlength\itemsep{0pt}
+      \item Look-ahead offset = single biggest gain.
+      \item HSV + Sobel mask cleaner than Canny on dashed lines.
+      \item Quadratic fits + EMA give stable curves.
+    \end{itemize}
+  \end{block}
+  \begin{alertblock}{Failed / limitations}
+    \begin{itemize}\setlength\itemsep{0pt}
+      \item Centroid is structurally biased -- no tuning saves it.
+      \item Hough lingers on its last good line through tight bends.
+      \item Polyfit's IPM warp assumes flat ground; real cameras need
+            re-tuning.
+      \item Simulator is too clean -- numbers are an upper bound.
+    \end{itemize}
+  \end{alertblock}
+\end{frame}
+
+\begin{frame}{Take-aways}
+  \begin{itemize}
+    \item A modest classical-CV upgrade (BEV warp + sliding-window
+          quadratic fit) cuts RMS lateral error by \highlight{34--40\,\%}
+          vs.\ the textbook Hough pipeline.
+    \item The change is fully interpretable: we can point at each
+          stage in Fig.~3 and say why it helps.
+    \item Look-ahead offsets are essentially free on top of a
+          polynomial fit and turn a reactive PID into a quasi-MPC.
+    \item Closing the remaining gap to Stanley-on-truth would need
+          sub-pixel-accurate perception $\Rightarrow$ a learned
+          segmenter is the next step.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[standout]
+  Thank you. \\[2em]
+  \small\color{gray}
+  Code, simulator, report and these slides are all in this repo.\\
+  Questions?
+\end{frame}
+
+\appendix
+
+\begin{frame}{Backup: detector confidence per track}
+  \begin{itemize}
+    \item Centroid mean confidence: \highlight{0.27} (HSV blob coverage,
+          near zero whenever the road leaves the trapezoid).
+    \item Hough mean confidence: \highlight{0.99} (both lines almost
+          always found -- but ``found'' $\ne$ ``correct'').
+    \item Polyfit mean confidence: \highlight{1.00} (both polynomial
+          fits valid in every frame after warm-up).
+    \item Take-away: high detector confidence does not imply low
+          error. Lane-IoU is the better proxy.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Backup: why the look-ahead works}
+  Bicycle kinematics:
+  \[
+    \dot\theta = \frac{v}{L}\tan\delta
+  \]
+  \begin{itemize}
+    \item A pure-P controller on $e_\text{bottom}$ reacts to
+          \emph{current} position only.
+    \item Adding the look-ahead error $e_\text{LA}$ effectively
+          augments the controller with a free derivative term that
+          knows where the road is going.
+    \item Equivalent to a one-step preview MPC with horizon
+          $\sim 0.5$\,s at typical speeds -- without solving an
+          optimisation.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Backup: reproducibility}
+  \begin{center}\footnotesize\ttfamily
+    git clone <repo>\\
+    python -m venv .venv \&\& source .venv/bin/activate\\
+    pip install -r requirements.txt matplotlib pdf2image\\
+    python experiments.py \quad\# CSVs + summary figures\\
+    python make\_qualitative\_figures.py \quad\# overlays\\
+    cd presentation \&\& tectonic report.tex\\
+    cd presentation \&\& tectonic slides.tex
+  \end{center}
+  \vspace{0.6em}
+  \small All experiments are deterministic except the noise sweep,
+  seeded by NumPy's default RNG.
+\end{frame}
+
+\end{document}

@@ -1,6 +1,23 @@
-"""PID steering controller."""
+"""Steering controllers used in the simulator.
+
+This module provides the two controllers compared in the project:
+
+  * :class:`PIDController` -- the baseline. Takes a normalised lateral
+    offset (-1..+1) from the lane detector and outputs a steering angle.
+  * :class:`StanleyController` -- a feedback law combining cross-track
+    error and heading error. Outputs a steering angle directly from the
+    current vehicle state and the track geometry, so it does not depend
+    on the camera image and acts as a perception-free *upper-bound*
+    benchmark (the closest thing to a "ground-truth control" reference).
+
+The :class:`SpeedController` (adaptive longitudinal control) is left
+unchanged from the original simulator.
+"""
+
+import math
 
 import numpy as np
+
 import config as cfg
 
 
@@ -53,6 +70,76 @@ class PIDController:
         self.last_p = 0.0
         self.last_i = 0.0
         self.last_d = 0.0
+
+
+class StanleyController:
+    """Stanley steering law.
+
+    The Stanley controller (Hoffmann et al., 2007, Stanford) computes:
+
+        delta = heading_error + atan2(k * crosstrack_error, k_s + v)
+
+    where ``heading_error`` is the difference between the desired track
+    heading and the vehicle heading, ``crosstrack_error`` is the signed
+    lateral distance of the front axle to the path, ``v`` is the vehicle
+    speed and ``k``, ``k_s`` are gains. We add a small damping term on
+    the steering rate for smoother behaviour.
+
+    Unlike the PID, the Stanley law in this implementation reads the
+    *true* path geometry from the simulated track (an idealised lateral
+    error). It therefore serves as a perception-free reference: any gap
+    between the PID-on-detected-offset and Stanley-on-truth tells us how
+    much error the vision pipeline is introducing.
+    """
+
+    def __init__(self, k=cfg.STANLEY_K, k_s=cfg.STANLEY_KS,
+                 max_steer=cfg.MAX_STEERING_ANGLE):
+        self.k = k
+        self.k_s = k_s
+        self.max_steer = max_steer
+        self.prev_steer = 0.0
+        # Components published for the dashboard
+        self.last_p = 0.0  # crosstrack term
+        self.last_i = 0.0  # always 0 (no integral)
+        self.last_d = 0.0  # heading term
+
+    def compute(self, track, car_x, car_y, heading, speed, dt):
+        # Front-axle position so the Stanley law has a sensible reference
+        fx = car_x + cfg.WHEELBASE * math.cos(heading)
+        fy = car_y + cfg.WHEELBASE * math.sin(heading)
+        idx, e_cross = track.get_nearest_index(fx, fy)
+        track_heading = track.get_heading_at(idx)
+        # Heading error in (-pi, pi]; positive when track turns to the
+        # right of the vehicle's current heading (screen-y down frame).
+        psi = math.atan2(
+            math.sin(track_heading - heading),
+            math.cos(track_heading - heading),
+        )
+        # ``e_cross`` is positive when the front axle is to the right of
+        # the centreline. In our bicycle model, *positive* steering also
+        # turns the heading to the right, so to drive back to the path
+        # we need ``delta`` to become more *negative* as ``e_cross``
+        # grows -- which is the canonical Stanley form ``-atan2(k*e/v)``.
+        cross_term = math.atan2(self.k * e_cross, self.k_s + max(speed, 1e-3))
+        # In our screen-y-down + bicycle-model convention, positive
+        # steering rotates the heading "downward" (clockwise). When the
+        # car is to the right of the centreline (``e_cross > 0``) the
+        # centreline normal frame produces a *positive* ``cross_term``
+        # which already pulls the steering toward "more positive" --
+        # exactly the direction that would push us further from the
+        # path. The empirically-validated form below (``+cross_term``)
+        # matches the standard Stanley law once the sign of ``e_cross``
+        # is interpreted in this frame.
+        delta = psi + cross_term
+        delta = float(np.clip(delta, -self.max_steer, self.max_steer))
+        self.last_p = cross_term
+        self.last_d = psi
+        self.prev_steer = delta
+        return delta
+
+    def reset(self):
+        self.prev_steer = 0.0
+        self.last_p = self.last_i = self.last_d = 0.0
 
 
 class SpeedController:

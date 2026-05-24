@@ -10,8 +10,8 @@ import config as cfg
 from track import Track
 from vehicle import Vehicle
 from camera import FPVCamera
-from vision import LaneDetector
-from controller import PIDController, SpeedController
+from lane_methods import make_detector, DETECTORS
+from controller import PIDController, StanleyController, SpeedController
 from ui import UI
 
 
@@ -27,6 +27,20 @@ def parse_args():
         default=None,
         metavar="NAME",
         help=f"Track to load: {', '.join(track_names)} (default: show selector)",
+    )
+    parser.add_argument(
+        "--detector",
+        type=str,
+        choices=list(DETECTORS.keys()),
+        default="hough",
+        help="Lane detection method (default: hough)",
+    )
+    parser.add_argument(
+        "--controller",
+        type=str,
+        choices=["pid", "stanley"],
+        default="pid",
+        help="Steering controller (default: pid)",
     )
     return parser.parse_args()
 
@@ -209,19 +223,22 @@ def _render_track_thumbnail(track, width, height):
 
 # ── Simulation loop ─────────────────────────────────────────────────
 
-def run_simulation(screen, clock, track_key):
+def run_simulation(screen, clock, track_key,
+                   detector_name="hough", controller_name="pid"):
     """Run the simulation for a given track. Returns 'menu' or 'quit'."""
     tdef = cfg.TRACKS[track_key]
     track = Track(tdef["waypoints"], tdef["road_width"])
     vehicle = Vehicle(track)
     vehicle.speed = tdef["speed"]
     camera = FPVCamera()
-    detector = LaneDetector()
+    detector = make_detector(detector_name)
     pid = PIDController()
+    stanley = StanleyController()
+    active_ctrl = controller_name
     use_adaptive = tdef.get("adaptive_speed", False)
     speed_ctrl = SpeedController(tdef["speed"]) if use_adaptive else None
     ui = UI()
-    ui.track_name = tdef["description"]
+    ui.track_name = f"{tdef['description']}  [{detector_name}/{active_ctrl}]"
     trail = deque(maxlen=cfg.TRAIL_MAX_LENGTH)
 
     paused = False
@@ -249,11 +266,24 @@ def run_simulation(screen, clock, track_key):
                     vehicle = Vehicle(track)
                     vehicle.speed = tdef["speed"]
                     pid.reset()
-                    detector = LaneDetector()
+                    stanley.reset()
+                    detector = make_detector(detector_name)
                     if speed_ctrl:
                         speed_ctrl.reset(tdef["speed"])
                     trail.clear()
                     ui.offset_history.clear()
+                elif event.key == pygame.K_d:
+                    # Cycle detectors
+                    keys = list(DETECTORS.keys())
+                    detector_name = keys[(keys.index(detector_name) + 1) % len(keys)]
+                    detector = make_detector(detector_name)
+                    ui.track_name = f"{tdef['description']}  [{detector_name}/{active_ctrl}]"
+                elif event.key == pygame.K_c:
+                    # Toggle controller
+                    active_ctrl = "stanley" if active_ctrl == "pid" else "pid"
+                    pid.reset()
+                    stanley.reset()
+                    ui.track_name = f"{tdef['description']}  [{detector_name}/{active_ctrl}]"
                 elif event.key == pygame.K_UP:
                     if speed_ctrl:
                         speed_ctrl.max_speed = min(speed_ctrl.max_speed + 20, 300)
@@ -266,7 +296,8 @@ def run_simulation(screen, clock, track_key):
                         vehicle.speed = max(vehicle.speed - 20, 40)
 
         if paused:
-            metrics = _build_metrics(vehicle, pid, detector, fps_ema, speed_ctrl)
+            ctrl_obj = pid if active_ctrl == "pid" else stanley
+            metrics = _build_metrics(vehicle, ctrl_obj, detector, fps_ema, speed_ctrl)
             ui.draw(screen, track, vehicle, trail, None, metrics)
             pause_font = pygame.font.SysFont(cfg.FONT_MONO, 36, bold=True)
             pause_surf = pause_font.render("PAUSED", True, cfg.GAUGE_FILL_WARN)
@@ -283,18 +314,34 @@ def run_simulation(screen, clock, track_key):
         fpv_image = camera.render(vehicle.x, vehicle.y, vehicle.heading, track)
         detection = detector.detect(fpv_image)
 
-        normalized_offset = detection.center_offset / (cfg.CAMERA_IMG_W / 2)
-        steering_cmd = pid.compute(normalized_offset, dt)
+        if active_ctrl == "stanley":
+            steering_cmd = stanley.compute(
+                track, vehicle.x, vehicle.y,
+                vehicle.heading, vehicle.speed, dt,
+            )
+            ctrl_obj = stanley
+        else:
+            # The polyfit detector exposes a look-ahead offset; use it so
+            # the PID can react to curves earlier than the bottom-of-image
+            # offset alone allows.
+            err_px = (
+                detection.lookahead_offset
+                if detector_name == "polyfit"
+                else detection.center_offset
+            )
+            normalized_offset = err_px / (cfg.CAMERA_IMG_W / 2)
+            steering_cmd = pid.compute(normalized_offset, dt)
+            ctrl_obj = pid
 
         vehicle.update(dt, steering_cmd)
         trail.append((vehicle.x, vehicle.y))
 
-        metrics = _build_metrics(vehicle, pid, detection, fps_ema, speed_ctrl)
+        metrics = _build_metrics(vehicle, ctrl_obj, detection, fps_ema, speed_ctrl)
         ui.draw(screen, track, vehicle, trail, detection.annotated, metrics)
         pygame.display.flip()
 
 
-def _build_metrics(vehicle, pid, detection_or_detector, fps, speed_ctrl=None):
+def _build_metrics(vehicle, controller, detection_or_detector, fps, speed_ctrl=None):
     conf = 0.0
     offset = 0.0
     if hasattr(detection_or_detector, "confidence"):
@@ -309,9 +356,9 @@ def _build_metrics(vehicle, pid, detection_or_detector, fps, speed_ctrl=None):
         "offset": offset,
         "confidence": conf,
         "fps": fps,
-        "pid_p": pid.last_p,
-        "pid_i": pid.last_i,
-        "pid_d": pid.last_d,
+        "pid_p": getattr(controller, "last_p", 0.0),
+        "pid_i": getattr(controller, "last_i", 0.0),
+        "pid_d": getattr(controller, "last_d", 0.0),
     }
 
 
@@ -326,24 +373,26 @@ def main():
     clock = pygame.time.Clock()
 
     if args.map:
-        # Direct launch: skip selector
-        result = run_simulation(screen, clock, args.map)
-        if result == "menu":
-            # Fall through to selector loop
-            pass
-        else:
+        result = run_simulation(
+            screen, clock, args.map,
+            detector_name=args.detector,
+            controller_name=args.controller,
+        )
+        if result != "menu":
             pygame.quit()
             return
 
-    # Selection loop
     while True:
         chosen = track_select_screen(screen, clock)
         if chosen is None:
             break
-        result = run_simulation(screen, clock, chosen)
+        result = run_simulation(
+            screen, clock, chosen,
+            detector_name=args.detector,
+            controller_name=args.controller,
+        )
         if result == "quit":
             break
-        # result == "menu": loop back to selector
 
     pygame.quit()
 
