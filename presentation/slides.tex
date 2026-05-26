@@ -100,7 +100,7 @@
   \end{center}
   \vspace{1em}
   \begin{itemize}
-    \item Implement two classical baselines + one upgrade.
+    \item Implement three classical methods of increasing sophistication.
     \item Plug each into a PID controller.
     \item Add a Stanley controller driven from \emph{ground truth} as a
           perception-free oracle (upper bound on what the controller
@@ -186,93 +186,151 @@
 \section{Three lane detectors}
 % ════════════════════════════════════════════════════════════════════
 
-\begin{frame}{Baseline 1: centroid}
+\begin{frame}{Method 1: centroid (our baseline)}
   \begin{columns}[T,onlytextwidth]
     \begin{column}{0.55\textwidth}
       \textbf{Pipeline}
-      \begin{enumerate}
-        \item Threshold road colour in HSV
-              $(S<40,\,40<V<110)$.
-        \item Trapezoidal ROI mask.
-        \item Centroid of the resulting blob via image moments.
+      \begin{enumerate}\setlength\itemsep{1pt}
+        \item Threshold the grey road colour in HSV.
+        \item Mask to a trapezoidal ROI.
+        \item Centroid of the blob (image moments).
         \item EMA smoothing across frames.
       \end{enumerate}
 
-      \vspace{0.6em}
-      \textbf{Why include it?}
-      \begin{itemize}
-        \item A genuine \emph{lower bound}: the simplest detector we
-              could write down.
-        \item Demonstrates how far the lane-line geometry adds value.
+      \vspace{0.5em}
+      \textbf{Role}
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item Simplest detector we could write $\Rightarrow$ adopted as
+              the \highlight{reference baseline}.
+        \item Tells us how much the lane-line geometry of Methods 2--3
+              actually buys.
       \end{itemize}
     \end{column}
     \begin{column}{0.43\textwidth}
       \begin{block}{Spoiler}
         \highlight{Does not complete a lap on any track.}\\
-        The blob centroid is biased away from the lane centre whenever
-        the road is asymmetric in the field of view.
+        The blob centroid drifts off-centre whenever the road is
+        asymmetric in the field of view.
       \end{block}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}{Baseline 2: Hough lines (the textbook pipeline)}
+\begin{frame}{Method 2: Hough lines (the textbook pipeline)}
   \begin{columns}[T,onlytextwidth]
     \begin{column}{0.55\textwidth}
-      \begin{enumerate}
-        \item Grayscale + $5{\times}5$ Gaussian blur.
-        \item Canny edges, $T_\text{low}=50$, $T_\text{high}=150$.
-        \item Trapezoidal ROI mask.
-        \item Probabilistic Hough
-              ($\rho=1$, $\theta=\pi/180$, thresh $25$,
-              minlen $30$, gap $40$).
-        \item Classify segments into left/right by slope sign + image
-              side, length-weighted average per side.
-        \item Midpoint of the two lines at the bottom = lane centre.
-              $\alpha=0.4$ EMA smoothing.
+      \textbf{Pipeline}
+      \begin{enumerate}\setlength\itemsep{2pt}
+        \item Blur, then Canny edges.
+        \item Trapezoidal ROI -- keep only the road.
+        \item Probabilistic Hough $\Rightarrow$ line segments.
+        \item Split by slope sign: left vs.\ right lane.
+        \item Length-weighted average $\Rightarrow$ one line per side.
+        \item Lane centre = midpoint at the bottom.
       \end{enumerate}
     \end{column}
     \begin{column}{0.43\textwidth}
-      \begin{itemize}
-        \item Works well on straights.
-        \item \highlight{Wrong model on every curve:}
-              a straight line fit through a bend underestimates
-              the curvature.
-        \item Fall-back: remember last good line on dropouts.
+      \textbf{Strength}
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item Fast, no training, fully interpretable.
+        \item Rock-solid on straight road.
+      \end{itemize}
+      \vspace{0.5em}
+      \textbf{Weakness}
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item \highlight{Models every lane as a straight line.}
+        \item In a curve, the line cuts the corner -- the error grows
+              with the bend.
       \end{itemize}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}{Proposed: bird's-eye + sliding-window polyfit}
+\begin{frame}{Method 3: bird's-eye + sliding-window polyfit}
   \begin{center}
-    \includegraphics[width=0.96\linewidth]{figures/polyfit_pipeline.pdf}
+    \includegraphics[width=0.94\linewidth]{figures/polyfit_pipeline.pdf}
   \end{center}
   \footnotesize
-  \begin{enumerate}\setlength\itemsep{1pt}
-    \item \highlight{Lane-pixel mask}: Sobel-x + HSV masks for white
-          boundaries and yellow dashes.
-    \item \highlight{Inverse perspective}: homography to $320\!\times\!320$
-          BEV; curves become low-order polynomials.
-    \item \highlight{Sliding windows}: column histogram seeds two bases;
-          nine $50$-px windows climb upward.
-    \item \highlight{Quadratic fit + reprojection}: $x=ay^2+by+c$ per
-          lane, EMA on coefficients, reproject polygon to FPV.
-  \end{enumerate}
+  Four stages, each fixing a specific weakness of Method 2:
+  \begin{itemize}\setlength\itemsep{1pt}
+    \item \highlight{Lane pixels} -- colour $+$ edges, not just Canny.
+    \item \highlight{Bird's-eye warp} -- the model sees true road shape.
+    \item \highlight{Sliding windows} -- robust on dashed lines.
+    \item \highlight{Quadratic fit} -- a curve, not a straight line.
+  \end{itemize}
 \end{frame}
 
-\begin{frame}{The one idea that matters: look-ahead offset}
+\begin{frame}{Method 3, step 1 -- undo the perspective}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.55\textwidth}
+      \footnotesize
+      \textbf{Problem.} In the camera image, the same physical dash
+      covers $\sim 30$\,px near the car but only $\sim 2$\,px far ahead.
+      A pixel-counting curve fit therefore listens to the near road and
+      \highlight{ignores the far field} -- exactly the part that
+      announces upcoming curves.
+      \vspace{0.6em}
+
+      \textbf{Fix.} A fixed homography warps the ROI trapezoid into a
+      square top-down view. In that view:
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item Every dash is the same size, near or far.
+        \item Curved lanes become \highlight{gentle bends}, not
+              vanishing-point lines.
+        \item A 2nd-order polynomial $x = a y^2 + b y + c$ fits a
+              typical road curve almost exactly.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.43\textwidth}\footnotesize
+      \begin{block}{Why this is the key step}
+        Without the warp, even a quadratic fit barely beats Hough,
+        because the near road still dominates.\\[3pt]
+        With the warp, near and far pixels get \highlight{equal say}
+        in the fit.
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Method 3, step 2 -- find each lane}
+  \footnotesize
+  Inside the bird's-eye view, which pixels belong to the left vs.\
+  right lane?
+  \vspace{0.4em}
+
+  \textbf{Sliding-window search}
+  \begin{enumerate}\setlength\itemsep{1pt}
+    \item \highlight{Seed}: column histogram of the bottom half
+          $\Rightarrow$ two strongest peaks = lane bases.
+    \item \highlight{Walk upward}: stack of 9 rectangular windows above
+          each base; collect bright pixels inside.
+    \item \highlight{Recentre}: if enough pixels are found, slide the
+          next window over to follow them. Robust to dashed lines and
+          short gaps.
+  \end{enumerate}
+
+  \vspace{0.4em}
+  \textbf{Quadratic fit + reprojection}
+  \begin{itemize}\setlength\itemsep{1pt}
+    \item Least-squares fit $x = a y^2 + b y + c$ on the collected
+          pixels, one polynomial per lane.
+    \item EMA on the coefficients $\Rightarrow$ stable across frames.
+    \item Warp the curve back to the camera image for the overlay and
+          for the lane-IoU metric.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Method 3, step 3 -- the look-ahead offset}
   \begin{columns}[T,onlytextwidth]
     \begin{column}{0.5\textwidth}
-      \begin{itemize}
-        \item The polynomial fit gives us the lane shape, not just one
-              point on it.
-        \item Evaluate the lane centre at \highlight{45\,\% of the way
-              up the BEV} -- a 1-frame predictor essentially free on
-              top of the polyfit.
-        \item Feed that to the PID instead of the bottom-of-image
-              offset.
-        \item With it disabled, polyfit's RMS gain shrinks from
+      \begin{itemize}\setlength\itemsep{1pt}
+        \item The polynomial gives us the lane \emph{shape}, not just
+              one point on it.
+        \item Evaluate the lane centre at \highlight{45\,\% up the
+              BEV} -- a 1-frame predictor, essentially free.
+        \item Feed \emph{that} to the PID instead of the bottom-of-
+              image offset.
+        \item Turn it off and the polyfit's RMS gain shrinks from
               $\sim 40\,\%$ to $\sim 10\,\%$.
       \end{itemize}
     \end{column}
