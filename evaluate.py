@@ -55,7 +55,7 @@ import numpy as np
 
 import config as cfg
 from camera import FPVCamera
-from controller import PIDController, StanleyController
+from controller import PIDController, SpeedController, StanleyController
 from lane_methods import make_detector
 from track import Track
 from vehicle import Vehicle
@@ -156,6 +156,11 @@ def run_one(detector_name: str,
     detector = make_detector(detector_name)
     pid = PIDController()
     stanley = StanleyController()
+    # Tracks flagged with adaptive_speed (currently the Red Bull Ring) are
+    # designed to be driven with the curvature-based speed controller --
+    # otherwise the constant base speed runs the car off the sharp turns.
+    speed_ctrl = (SpeedController(base_speed)
+                  if tdef.get("adaptive_speed", False) else None)
 
     # Lap detection: start near centerline index 0, track when we leave
     # a neighbourhood of the start and then return to it.
@@ -175,6 +180,8 @@ def run_one(detector_name: str,
 
     t = 0.0
     while t < max_duration_s and laps_done < laps:
+        if speed_ctrl is not None:
+            vehicle.speed = speed_ctrl.update(track, vehicle.x, vehicle.y, dt)
         img = camera.render(vehicle.x, vehicle.y, vehicle.heading, track)
         img = _add_noise(img, noise) if noise > 0 else img
 

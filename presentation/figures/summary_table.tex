@@ -1,16 +1,31 @@
-\begin{tabular}{l c c c c c c}
+\begin{tabular}{l l r r r r r r}
 \toprule
- & \multicolumn{2}{c}{\textsc{hough}} & \multicolumn{2}{c}{\textsc{polyfit}} & \textsc{centroid} & Stanley \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-Track & RMS & IoU & RMS & IoU & RMS & RMS \\
+Track & Detector & Lap & RMS px & Mean px & Max px & IoU & ms/det \\
 \midrule
-Simple Oval & 27.4 & 0.17 & 17.6 & 0.25 & \textsc{dnf} & 0.4 \\
-Stadium Circuit & 26.2 & 0.24 & 17.0 & 0.31 & \textsc{dnf} & 0.6 \\
-Winding Road & 24.9 & 0.23 & 15.7 & 0.35 & \textsc{dnf} & 0.6 \\
-Grand Prix Circuit & 24.8 & 0.26 & 17.7 & 0.36 & \textsc{dnf} & 0.8 \\
-Highland Rally & 23.8 & 0.31 & 15.1 & 0.39 & \textsc{dnf} & 0.7 \\
+Simple Oval & centroid & DNF & 99.5 & 80.0 & 194.3 & 0.01 & 1.15 \\
+Simple Oval & hough & \checkmark & 27.4 & 27.2 & 28.7 & 0.17 & 0.75 \\
+Simple Oval & polyfit & \checkmark & 17.6 & 16.9 & 27.2 & 0.25 & 1.92 \\
 \midrule
-\multicolumn{1}{l}{\textit{mean} (px)} &
- 25.4 & 0.24 & 16.6 & 0.33 & -- & 0.6 \\
+Stadium Circuit & centroid & DNF & 39.5 & 32.8 & 113.4 & 0.39 & 1.79 \\
+Stadium Circuit & hough & \checkmark & 26.2 & 26.0 & 30.1 & 0.24 & 0.77 \\
+Stadium Circuit & polyfit & \checkmark & 17.0 & 16.3 & 23.6 & 0.31 & 1.94 \\
+\midrule
+Winding Road & centroid & DNF & 33.9 & 28.2 & 97.8 & 0.41 & 1.84 \\
+Winding Road & hough & \checkmark & 24.9 & 24.7 & 28.4 & 0.23 & 0.76 \\
+Winding Road & polyfit & \checkmark & 15.7 & 14.8 & 23.7 & 0.35 & 1.96 \\
+\midrule
+Grand Prix Circuit & centroid & DNF & 35.0 & 28.4 & 108.4 & 0.43 & 1.91 \\
+Grand Prix Circuit & hough & \checkmark & 24.8 & 24.6 & 27.8 & 0.26 & 0.77 \\
+Grand Prix Circuit & polyfit & \checkmark & 17.7 & 16.1 & 34.5 & 0.36 & 1.95 \\
+\midrule
+Highland Rally & centroid & DNF & 65.6 & 52.9 & 127.6 & 0.00 & 1.22 \\
+Highland Rally & hough & \checkmark & 23.8 & 23.6 & 26.1 & 0.31 & 0.78 \\
+Highland Rally & polyfit & \checkmark & 15.1 & 14.2 & 21.9 & 0.39 & 1.95 \\
+\midrule
+Red Bull Ring & centroid & DNF & 117.7 & 95.0 & 228.4 & 0.01 & 1.12 \\
+Red Bull Ring & hough & \checkmark & 31.0 & 30.5 & 51.9 & 0.21 & 0.73 \\
+Red Bull Ring & polyfit & DNF & 28.5 & 22.8 & 82.0 & 0.24 & 1.90 \\
+\midrule
+Simple Oval & Stanley (oracle) & \checkmark & 0.4 & 0.4 & 1.2 & 0.52 & 2.04 \\
 \bottomrule
 \end{tabular}

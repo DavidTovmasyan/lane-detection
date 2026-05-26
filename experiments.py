@@ -38,9 +38,10 @@ RESULTS.mkdir(parents=True, exist_ok=True)
 FIGURES.mkdir(parents=True, exist_ok=True)
 
 
-TRACKS = ["oval", "stadium", "snake", "grand_prix", "mountain"]
+TRACKS = ["oval", "stadium", "snake", "grand_prix", "mountain", "redbull_ring"]
 DETECTORS = ["centroid", "hough", "polyfit"]
 CONTROLLERS = ["pid", "stanley"]
+TRACE_TRACKS = ["snake", "redbull_ring"]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -115,15 +116,16 @@ def experiment_noise():
 # ──────────────────────────────────────────────────────────────────────
 
 def experiment_traces():
-    print("\n[E3] per-frame trajectories on snake (PID)")
-    for det in DETECTORS:
-        out = RESULTS / f"trace_snake_{det}_pid.csv"
-        s = run_one(det, "pid", "snake",
-                    laps=1, max_duration_s=60.0,
-                    log_path=str(out))
-        print(f"  snake {det:9s} -> {out.name}  "
-              f"laps={s.laps_done} rms={s.rms_off_px:.2f}")
-    _plot_traces()
+    print("\n[E3] per-frame trajectories (PID)")
+    for track in TRACE_TRACKS:
+        for det in DETECTORS:
+            out = RESULTS / f"trace_{track}_{det}_pid.csv"
+            s = run_one(det, "pid", track,
+                        laps=1, max_duration_s=90.0,
+                        log_path=str(out))
+            print(f"  {track:13s} {det:9s} -> {out.name}  "
+                  f"laps={s.laps_done} rms={s.rms_off_px:.2f}")
+        _plot_traces(track)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -279,11 +281,11 @@ def _plot_noise(rows, sigmas):
     plt.close(fig)
 
 
-def _plot_traces():
+def _plot_traces(track="snake"):
     fig, axs = plt.subplots(2, 1, figsize=(7.0, 4.2), sharex=True)
 
     for det in DETECTORS:
-        path = RESULTS / f"trace_snake_{det}_pid.csv"
+        path = RESULTS / f"trace_{track}_{det}_pid.csv"
         if not path.exists():
             continue
         rows = list(_read_csv(path))
@@ -297,14 +299,15 @@ def _plot_traces():
         ax.grid(alpha=0.3)
         ax.axhline(0, color="k", linewidth=0.5)
 
+    title_track = cfg.TRACKS[track]["description"]
     axs[0].set_ylabel("True lateral err (px)")
-    axs[0].set_title("Snake track: true vs detected lateral error (PID controller)")
+    axs[0].set_title(f"{title_track}: true vs detected lateral error (PID controller)")
     axs[0].legend(ncol=3, frameon=False, loc="upper right")
     axs[1].set_ylabel("Detector offset (px)")
     axs[1].set_xlabel("time (s)")
     plt.tight_layout()
-    fig.savefig(FIGURES / "snake_traces.pdf")
-    fig.savefig(FIGURES / "snake_traces.png", dpi=130)
+    fig.savefig(FIGURES / f"{track}_traces.pdf")
+    fig.savefig(FIGURES / f"{track}_traces.png", dpi=130)
     plt.close(fig)
 
 

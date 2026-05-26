@@ -387,34 +387,42 @@
     \includegraphics[width=0.78\linewidth]{figures/rms_by_track.pdf}
   \end{center}
   \vspace{-0.6em}
-  \footnotesize Centroid \highlight{DNF} on every track. Hough:
-  $25.4$\,px mean RMS. Polyfit: $\mathbf{16.6}$\,px ($\highlight{-34\,\%}$).
-  Stanley+truth: $<1$\,px.
+  \footnotesize Centroid \highlight{DNF} on every track. On the
+  $5$ base tracks: Hough $25.4$\,px mean RMS, polyfit
+  $\mathbf{16.6}$\,px ($\highlight{-34\,\%}$). Red Bull Ring (hairpins,
+  adaptive speed): \highlight{polyfit DNFs} at a hairpin, Hough
+  survives at $31.0$\,px. Stanley+truth: $<2$\,px throughout.
 \end{frame}
 
 \begin{frame}{The full table}
-  \vspace{0.5em}
-  \begin{center}\small
+  \vspace{-0.4em}
+  \begin{center}\tiny\setlength{\tabcolsep}{4pt}
+    \renewcommand{\arraystretch}{0.9}
     \input{figures/summary_table.tex}
   \end{center}
-  \vspace{0.5em}
-  \begin{itemize}
-    \item Polyfit beats Hough on \emph{every} track on both RMS and IoU.
-    \item Lane-IoU rises from $0.24$ to $0.33$ on average
-          ($\mathbf{+38\,\%}$) -- the gain is geometric, not just from
-          the look-ahead.
+  \vspace{-0.2em}
+  \scriptsize
+  \begin{itemize}\setlength\itemsep{0pt}
+    \item Where polyfit completes, it beats Hough on RMS and IoU
+          ($-34\,\%$ RMS, $+38\,\%$ IoU averaged).
+    \item \highlight{Red Bull Ring caveat}: the quadratic fit briefly
+          blows up at a hairpin and the car leaves the road. Hough's
+          straight line degrades gracefully and finishes.
   \end{itemize}
 \end{frame}
 
-\begin{frame}{What the controller actually sees}
-  \vspace{-0.4em}
+\begin{frame}{Red Bull Ring: where polyfit falls over}
+  \vspace{-0.5em}
   \begin{center}
-    \includegraphics[width=0.78\linewidth]{figures/snake_traces.pdf}
+    \includegraphics[width=0.70\linewidth]{figures/redbull_ring_traces.pdf}
   \end{center}
-  \vspace{-0.4em}
-  \footnotesize \highlight{Top:} true error -- polyfit bounded, Hough
-  swings $\pm 30$\,px. \highlight{Bottom:} detector offset (the PID
-  input). Centroid (grey) leaves the road early.
+  \vspace{-0.5em}
+  \scriptsize \highlight{Top:} centroid bails at $t\!\approx\!3$\,s.
+  Hough holds $\sim 30$\,px to the flag. Polyfit trails Hough until
+  $t\!\approx\!17$\,s.\\
+  \highlight{Bottom:} a hairpin makes the quadratic fit explode to
+  $\sim\!8000$\,px for two frames -- PID over-corrects, car off-track.
+  \highlight{Fix:} clamp detector offset, or reject fit outliers.
 \end{frame}
 
 \begin{frame}{Robustness to camera noise}
@@ -496,8 +504,9 @@
     \begin{itemize}\setlength\itemsep{0pt}
       \item Centroid is structurally biased -- no tuning saves it.
       \item Hough lingers on its last good line through tight bends.
-      \item Polyfit's IPM warp assumes flat ground; real cameras need
-            re-tuning.
+      \item Polyfit's quadratic fit can \highlight{blow up at tight
+            hairpins} (Red Bull Ring) -- needs outlier rejection.
+      \item IPM warp assumes flat ground; real cameras need re-tuning.
       \item Simulator is too clean -- numbers are an upper bound.
     \end{itemize}
   \end{alertblock}
