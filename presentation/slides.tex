@@ -411,6 +411,19 @@
   \end{itemize}
 \end{frame}
 
+\begin{frame}{Winding Road: where polyfit pays off}
+  \vspace{-0.5em}
+  \begin{center}
+    \includegraphics[width=0.68\linewidth]{figures/snake_traces.pdf}
+  \end{center}
+  \vspace{-0.5em}
+  \scriptsize \highlight{Top:} true lateral error -- centroid bails by
+  $t\!\approx\!12$\,s; Hough sits at $-25$\,px through the S-curves;
+  polyfit oscillates around $0$ (follows bends, doesn't cut them).\\
+  \highlight{Bottom:} the detector offset fed to the PID -- both
+  polyfit and Hough stay well-behaved on this track.
+\end{frame}
+
 \begin{frame}{Red Bull Ring: where polyfit falls over}
   \vspace{-0.5em}
   \begin{center}
